@@ -69,6 +69,7 @@ services:
       - AWS_REGION=${AWS_REGION:-}
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
       - DOCUMENT_STORAGE_URL=${DOCUMENT_STORAGE_URL:-http://document_storage:8080}
+      - GROQ_API_KEY=${GROQ_API_KEY:-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}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/"]
       interval: 30s

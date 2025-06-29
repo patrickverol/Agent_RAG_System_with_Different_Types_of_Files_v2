@@ -22,6 +22,9 @@ import time
 # Import environment variables handling
 import os
 
+# Import function to load environment variables
+from dotenv import load_dotenv
+
 # Filter warnings
 import warnings
 warnings.filterwarnings('ignore')
@@ -31,6 +34,12 @@ from llm import gera_documento_id, captura_user_input, captura_user_feedback
 
 # Import storage module
 from storage import get_storage
+
+# Import agent module
+from agent import run_agent
+
+# Load environment variables
+load_dotenv()
 
 
 def main():
@@ -45,6 +54,13 @@ def main():
     # Set application title
     st.title('🤖 RAG Project')
     st.title('🔍 Search Engine with Generative AI and RAG')
+
+    # Get Groq API key
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key or groq_api_key.strip() == "":
+        st.error("GROQ_API_KEY not defined or empty in environment variables!")
+        st.error("Please set the GROQ_API_KEY environment variable in your docker-compose.yaml or .env file.")
+        st.stop()
 
     # Sidebar with instructions
     st.sidebar.title("Instructions")
@@ -64,6 +80,8 @@ def main():
     - TXT
     - PPTX
     - PPT
+    - CSV
+    - XLSX
 
     ### Purpose:
     This application provides a search engine for documents. You can search for documents by typing a question in the text input field. Download the document to view the reference content.
@@ -72,7 +90,6 @@ def main():
     # Support button in sidebar
     if st.sidebar.button("Support"):
         st.sidebar.write("For any questions, please contact: patrickverol@gmail.com")
-
 
     # Configure storage
     storage_config = {
@@ -124,165 +141,123 @@ def main():
         # Display the question
         st.write("The question was: \"", question+"\"")
         
-        # Define API URL
-        url = "http://backend:8000/rag_api"
-
-        # Create JSON payload
-        payload = json.dumps({"query": question})
+        # Start time measurement
+        start_time = time.time()
         
-        # Set request headers
-        headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
-
-        # Make POST request to API
-        start_time = time.time()  # Start time measurement
         try:
-            response = requests.request("POST", url, headers=headers, data=payload)
-            response.raise_for_status()  # Raises an HTTPError for bad responses (4xx, 5xx)
-            
-            # Debug information
-            print(f"Response Status Code: {response.status_code}")
-            print(f"Response Headers: {response.headers}")
-            print(f"Response Content: {response.text[:200]}...")  # Print first 200 chars of response
-            
-            # Check if response is empty
-            if not response.text:
-                st.error("The API returned an empty response. Check the backend.")
-                return
+            with st.spinner("Processing your query..."):
+                # Run the agent
+                final_state = run_agent(question, groq_api_key)
                 
-            # Try to parse JSON
-            try:
-                response_data = json.loads(response.text)
-            except json.JSONDecodeError as e:
-                st.error(f"Error decoding JSON response: {str(e)}")
-                print(f"Received response: {response.text}")
-                return
+                # Get the final answer
+                answer = final_state.get("final_answer", "No answer generated.")
+                source_decision = final_state.get("source_decision", "Unknown")
                 
-            end_time = time.time()    # End time measurement
-            responseTime = round(end_time - start_time, 2)  # Calculate response time
-
-            # Get API response and extract answer text
-            answer = response_data.get("answer")
-            if not answer:
-                st.error("The API response does not contain the 'answer' field")
-                return
+                end_time = time.time()
+                responseTime = round(end_time - start_time, 2)
                 
-            score = response_data.get("score", 1.0)  # Get response score, default to 1.0 if not present
-
-            # Compile regex to find document references
-            rege = re.compile("\[Document\ [0-9]+\]|\[[0-9]+\]")
-            
-            # Find all document references in response
-            m = rege.findall(answer)
-            print(f"Found document references: {m}")  # Debug log
-
-            # Initialize list for document numbers
-            num = []
-            
-            # Extract document numbers from references
-            for n in m:
-                num = num + [int(s) for s in re.findall(r'\b\d+\b', n)]
-            print(f"Extracted document numbers: {num}")  # Debug log
-
-            # Display answer using markdown
-            st.markdown(answer)
-            
-            # Get documents from response context
-            documents = response_data.get('context', [])
-            print(f"Documents from context: {documents}")  # Debug log
-            
-            # Initialize list for documents to display
-            show_docs = []
-            
-            # Add documents matching extracted numbers to show_docs
-            for n in num:
-                for doc in documents:
-                    if int(doc['id']) == n:
-                        # Ensure the document path is relative to the documents directory
-                        if doc['path'].startswith('/'):
-                            doc['path'] = doc['path'][1:]  # Remove leading slash
-                        show_docs.append(doc)
-            print(f"Documents to show: {show_docs}")  # Debug log
-            
-            # Initialize variable for download button identifiers
-            dsa_id = 10231718414897291
-
-            # Display expanded documents with download buttons
-            for doc in show_docs:
-                # Create expander for each document
-                with st.expander(str(doc['id'])+" - "+doc['path']):
-                    # Display document content
-                    st.write(doc['content'])
-                    
-                    # Get document URL from storage
+                # Display answer using markdown
+                st.markdown(answer)
+                
+                # Display source information
+                st.info(f"Source used (decided by router): {source_decision}")
+                
+                # If RAG was used, try to get documents for display
+                if source_decision == "RAG":
                     try:
-                        # Ensure the document path is relative and properly formatted
-                        doc_path = doc['path'].lstrip('/')
-                        print(f"Getting URL for document path: {doc_path}")
-                        doc_url = storage.get_document_url(doc_path)
-                        print(f"Generated URL: {doc_url}")
+                        # Call the RAG API to get document details for display
+                        url = "http://backend:8000/rag_api"
+                        payload = json.dumps({"query": question})
+                        headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
                         
-                        # Get document content
-                        temp_file = storage.get_document(doc_path)
-                        print(f"Successfully retrieved document content")
+                        response = requests.request("POST", url, headers=headers, data=payload)
+                        response.raise_for_status()
                         
-                        # Read the file content in binary mode
-                        with open(temp_file, 'rb') as f:
-                            doc_content = f.read()
+                        response_data = json.loads(response.text)
+                        documents = response_data.get('context', [])
                         
-                        # Determine MIME type based on file extension
-                        file_ext = os.path.splitext(doc_path)[1].lower()
-                        mime_type = {
-                            '.pdf': 'application/pdf',
-                            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            '.doc': 'application/msword',
-                            '.txt': 'text/plain',
-                            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                            '.ppt': 'application/vnd.ms-powerpoint'
-                        }.get(file_ext, 'application/octet-stream')
-                        
-                        # Create download button with proper MIME type
-                        st.download_button(
-                            label=f"Download {os.path.basename(doc_path)}",
-                            data=doc_content,
-                            file_name=os.path.basename(doc_path),
-                            mime=mime_type
-                        )
-                        
-                        # Clean up temporary file
-                        os.unlink(temp_file)
-                        
+                        if documents:
+                            st.subheader("Documents used:")
+                            
+                            # Display expanded documents with download buttons
+                            for doc in documents:
+                                # Create expander for each document
+                                with st.expander(f"{doc['id']} - {doc['path']}"):
+                                    # Display document content
+                                    st.write(doc['content'])
+                                    
+                                    # Get document URL from storage
+                                    try:
+                                        # Ensure the document path is relative and properly formatted
+                                        doc_path = doc['path'].lstrip('/')
+                                        print(f"Getting URL for document path: {doc_path}")
+                                        doc_url = storage.get_document_url(doc_path)
+                                        print(f"Generated URL: {doc_url}")
+                                        
+                                        # Get document content
+                                        temp_file = storage.get_document(doc_path)
+                                        print(f"Successfully retrieved document content")
+                                        
+                                        # Read the file content in binary mode
+                                        with open(temp_file, 'rb') as f:
+                                            doc_content = f.read()
+                                        
+                                        # Determine MIME type based on file extension
+                                        file_ext = os.path.splitext(doc_path)[1].lower()
+                                        mime_type = {
+                                            '.pdf': 'application/pdf',
+                                            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                            '.doc': 'application/msword',
+                                            '.txt': 'text/plain',
+                                            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                                            '.ppt': 'application/vnd.ms-powerpoint'
+                                        }.get(file_ext, 'application/octet-stream')
+                                        
+                                        # Create download button with proper MIME type
+                                        st.download_button(
+                                            label=f"Download {os.path.basename(doc_path)}",
+                                            data=doc_content,
+                                            file_name=os.path.basename(doc_path),
+                                            mime=mime_type
+                                        )
+                                        
+                                        # Clean up temporary file
+                                        os.unlink(temp_file)
+                                        
+                                    except Exception as e:
+                                        print(f"Error downloading {doc_path}: {str(e)}")
+                                        st.error(f"Error downloading document: {str(e)}")
+                    
                     except Exception as e:
-                        print(f"Error downloading {doc_path}: {str(e)}")
-                        st.error(f"Error downloading document: {str(e)}")
+                        print(f"Error getting document details: {e}")
+                        st.warning("Could not retrieve document details for display.")
 
-            # Add evaluation and feedback
-            try:
-                # Generate document ID
-                docId = gera_documento_id(question, answer)
-                
-                # Capture user input
-                captura_user_input(
-                    docId,
-                    question.replace("'", ""), 
-                    answer, 
-                    score,  # Use score from API
-                    responseTime,  # Use calculated response time
-                )
+                # Add evaluation and feedback
+                try:
+                    # Generate document ID
+                    docId = gera_documento_id(question, answer)
+                    
+                    # Capture user input
+                    captura_user_input(
+                        docId,
+                        question.replace("'", ""), 
+                        answer, 
+                        1.0,  # Default score
+                        responseTime,  # Use calculated response time
+                    )
 
-                # Update session state
-                st.session_state.result = answer
-                st.session_state.docId = docId
-                st.session_state.userInput = question.replace("'", "")
-                st.session_state.feedbackSubmitted = False
+                    # Update session state
+                    st.session_state.result = answer
+                    st.session_state.docId = docId
+                    st.session_state.userInput = question.replace("'", "")
+                    st.session_state.feedbackSubmitted = False
 
-            except Exception as e:
-                print(e)
-                st.error("Error processing the evaluation. Check the Qdrant and try again.")
+                except Exception as e:
+                    print(e)
+                    st.error("Error processing the evaluation. Check the Qdrant and try again.")
 
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error in the API request: {str(e)}")
         except Exception as e:
-            st.error(f"Unexpected error: {str(e)}")
+            st.error(f"Error processing your query: {str(e)}")
 
     # Display query result and feedback outside the "Send" button block
     if st.session_state.result:
