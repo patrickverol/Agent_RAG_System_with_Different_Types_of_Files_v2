@@ -1,0 +1,179 @@
+# RAG Project - Docker Compose Configuration
+# This file contains the configuration for the RAG project containers:
+# - Backend (FastAPI)
+# - Qdrant (Vector Database)
+# - Frontend (Streamlit)
+# - Document Storage (Optional, only used with HTTP storage type)
+
+# version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: backend.Dockerfile
+    container_name: rag_backend
+    volumes:
+      - ./backend:/app
+      - ./document_storage/documents:/app/documents
+    ports:
+      - "8000:8000"
+    networks:
+      - rag_network
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres_source:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_KEY=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
+      - STORAGE_TYPE=${STORAGE_TYPE:-local}
+      - DOCUMENTS_PATH=${DOCUMENTS_PATH:-/app/documents}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - DOCUMENT_STORAGE_URL=${DOCUMENT_STORAGE_URL:-http://document_storage:8080}
+      - POSTGRES_HOST=postgres_source
+      - POSTGRES_PORT=5433
+      - POSTGRES_DB=rag_db
+      - POSTGRES_USER=rag_user
+      - POSTGRES_PASSWORD=rag_password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: frontend.Dockerfile
+    container_name: rag_frontend
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "8501:8501"
+    networks:
+      - rag_network
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BACKEND_URL=http://backend:8000
+      - STORAGE_TYPE=${STORAGE_TYPE:-local}
+      - DOCUMENTS_PATH=${DOCUMENTS_PATH:-/app/documents}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - DOCUMENT_STORAGE_URL=${DOCUMENT_STORAGE_URL:-http://document_storage:8080}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  document_storage:
+    build:
+      context: ./document_storage
+      dockerfile: Dockerfile
+    container_name: rag_document_storage
+    volumes:
+      - ./document_storage:/app
+      - ./document_storage/documents:/app/documents
+    ports:
+      - "8080:8080"
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres_evaluate:
+    image: postgres:13
+    container_name: rag_postgres_evaluate
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: admin
+    volumes:
+      - postgres-db-evaluate:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "admin"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "5432:5432"
+    networks:
+      - rag_network
+
+  grafana:
+    image: grafana/grafana
+    container_name: rag_grafana
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - grafana-plugins:/var/lib/grafana/plugins
+    networks:
+      - rag_network 
+    depends_on:
+      - postgres_evaluate
+
+  postgres_source:
+    image: postgres:13
+    container_name: rag_postgres_source
+    environment:
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_password
+      POSTGRES_DB: rag_db
+    volumes:
+      - postgres-db-source:/var/lib/postgresql/data
+      - ./init_db/init_financial_data.sql:/docker-entrypoint-initdb.d/init_financial_data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d rag_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    ports:
+      - "5433:5432"
+    networks:
+      - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  qdrant_data: 
+  postgres-db-evaluate:
+  grafana-storage:
+  grafana-plugins:
+  postgres-db-source:
