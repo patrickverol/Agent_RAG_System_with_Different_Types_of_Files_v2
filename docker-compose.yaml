@@ -35,7 +35,7 @@ services:
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
       - DOCUMENT_STORAGE_URL=${DOCUMENT_STORAGE_URL:-http://document_storage:8080}
       - POSTGRES_HOST=postgres_source
-      - POSTGRES_PORT=5433
+      - POSTGRES_PORT=5432
       - POSTGRES_DB=rag_db
       - POSTGRES_USER=rag_user
       - POSTGRES_PASSWORD=rag_password
@@ -164,9 +164,29 @@ services:
       retries: 10
       start_period: 60s
     ports:
-      - "5433:5432"
+      - "5433:5433"
     networks:
       - rag_network
+
+  stock_data_loader:
+    build:
+      context: ./init_db
+      dockerfile: Dockerfile
+    container_name: rag_stock_data_loader
+    depends_on:
+      postgres_source:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_HOST=postgres_source
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=rag_db
+      - POSTGRES_USER=rag_user
+      - POSTGRES_PASSWORD=rag_password
+      - RETRY_INTERVAL_HOURS=24
+    networks:
+      - rag_network
+    restart: unless-stopped
 
 networks:
   rag_network:

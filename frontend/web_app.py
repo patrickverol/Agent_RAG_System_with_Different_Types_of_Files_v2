@@ -73,6 +73,13 @@ def main():
     - Click on the "Not Satisfied" button if you are not satisfied with the answer.
     - Click on the "Download" button to download the document.
 
+    ### How the Agentic RAG works:
+    - Ask specific questions about your technical doubts.
+    - The system will automatically decide the best source (internal documents, web, or graphics).
+    - For graphics requests, use phrases like "create a chart", "generate a graph", "visualize data".
+    - Generative AI can make mistakes. ALWAYS validate critical information.
+    - Logs and Traces are sent to **Pydantic LogFire** and **LangSmith**.
+
     ### Available files:
     - PDF
     - DOCX
@@ -82,6 +89,9 @@ def main():
     - PPT
     - CSV
     - XLSX
+
+    ### Others Sources:
+    - POSTGRES DATABASE
 
     ### Purpose:
     This application provides a search engine for documents. You can search for documents by typing a question in the text input field. Download the document to view the reference content.
@@ -128,8 +138,8 @@ def main():
     # Create text input for questions with a default example
     question = st.text_input(
         "Type a question to execute a query on the documents:",
-        value="What is a broker?",
-        help="Example questions: 'What is a stock?', 'What are the key investment strategies?'"
+        value="Could you provide me with the closing prices of VALE shares? Then, create a line graph for me with these values.",
+        help="Example questions: 'What is a stock?', 'What are the key investment strategies?', 'Could you provide me with the closing prices of (something) shares? Then, create a line graph for me with these values.'"
     )
 
     # Check if "Send" button was clicked
@@ -156,11 +166,52 @@ def main():
                 end_time = time.time()
                 responseTime = round(end_time - start_time, 2)
                 
-                # Display answer using markdown
-                st.markdown(answer)
+                # Display answer using markdown (remove image data tags for cleaner display)
+                import re
+                # Remove image data tags from the displayed answer
+                clean_answer = re.sub(r'<image_data>.*?</image_data>', '', answer, flags=re.DOTALL)
+                st.markdown(clean_answer)
                 
                 # Display source information
                 st.info(f"Source used (decided by router): {source_decision}")
+                
+                # If GRAPHICS was used, display the generated image
+                if source_decision in ["GRAPHICS", "RAG_GRAPHICS"]:
+                    try:
+                        # Extract image data from the answer
+                        image_pattern = r'<image_data>(.*?)</image_data>'
+                        image_match = re.search(image_pattern, answer, re.DOTALL)
+                        
+                        if image_match:
+                            image_data_url = image_match.group(1)
+                            
+                            # Display the generated chart
+                            st.subheader("Generated Chart:")
+                            
+                            # Use HTML to display the base64 image
+                            st.markdown(
+                                f'<img src="{image_data_url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">',
+                                unsafe_allow_html=True
+                            )
+                            
+                            # Add download button for the image
+                            import base64
+                            # Extract base64 data from the data URL
+                            base64_data = image_data_url.split(',')[1]
+                            image_bytes = base64.b64decode(base64_data)
+                            
+                            st.download_button(
+                                label="Download Chart as PNG",
+                                data=image_bytes,
+                                file_name="generated_chart.png",
+                                mime="image/png"
+                            )
+                        else:
+                            st.warning("No image data found in the graphics result.")
+                            
+                    except Exception as e:
+                        print(f"Error displaying graphics: {e}")
+                        st.error(f"Error displaying generated chart: {str(e)}")
                 
                 # If RAG was used, try to get documents for display
                 if source_decision == "RAG":
@@ -182,9 +233,9 @@ def main():
                             # Display expanded documents with download buttons
                             for doc in documents:
                                 # Create expander for each document
-                                with st.expander(f"{doc['id']} - {doc['path']}"):
+                                with st.expander(f"**ID:** `{doc['id']}` - **Fonte:** `{doc['path']}`"):
                                     # Display document content
-                                    st.write(doc['content'])
+                                    st.text_area("**Content:**", doc['content'], height = 300)
                                     
                                     # Get document URL from storage
                                     try:
@@ -276,6 +327,11 @@ def main():
                     st.session_state.feedbackSubmitted = True
                     st.warning("Feedback registered: Not Satisfied")
 
+    # Rastreability of the application
+    APP_WATERMARK = "RAG-PROJECT-AGENTICRAG-LANGGRAPH-V2.0 - BY: PATRICK VEROL"
+
+    # Displays watermark at the bottom of the application
+    st.markdown(f"<div style='text-align: center; color: #cccccc; font-size:20px;'>{APP_WATERMARK}</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
