@@ -33,3 +33,7 @@ langchain-google-genai==2.1.6
 # Google GenAI for image generation
 google-genai==1.23.0
 Pillow==10.4.0
+
+# Machine learning for similarity calculations
+scikit-learn==1.7.0
+numpy==1.26.4

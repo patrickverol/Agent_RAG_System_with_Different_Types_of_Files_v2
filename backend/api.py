@@ -1,7 +1,7 @@
 """
 API Module
 This module implements the FastAPI endpoints for the RAG system.
-It handles document queries and provides responses using the RAG system.
+It handles document queries and provides responses using similarity-based retrieval.
 """
 
 # Import os module
@@ -27,6 +27,9 @@ from pydantic import BaseModel
 # Import HuggingFaceEmbeddings class from langchain_huggingface module to generate embeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 
+# Import similarity calculation
+from aux_functions import calcula_similaridade
+
 # Define Item class that inherits from BaseModel
 class Item(BaseModel):
     query: str
@@ -45,27 +48,6 @@ hf = HuggingFaceEmbeddings(
     model_name = model_name,
     model_kwargs = model_kwargs,
     encode_kwargs = encode_kwargs)
-
-# Define use_nvidia_api variable as False
-use_nvidia_api = False
-
-# Check if Nvidia key is available
-nvidia_key = os.getenv('NVIDIA_KEY')
-
-if nvidia_key:
-
-    # Import OpenAI class from openai module
-    from openai import OpenAI
-    
-    # Create OpenAI instance with base URL and API key
-    client_ai = OpenAI(base_url = "https://integrate.api.nvidia.com/v1", api_key = nvidia_key)
-
-    # Set use_nvidia_api to True
-    use_nvidia_api = True
-else:
-    
-    # Print message indicating that LLM cannot be used
-    print("Cannot use LLM. NVIDIA_KEY not found in environment variables.")
 
 # Create instance to connect to vector database
 client = QdrantClient("http://qdrant:6333")
@@ -121,68 +103,42 @@ async def rag_api(item: Item):
     # Get query from item
     query = item.query
     
-    # Perform similarity search
+    # Perform similarity search to get top 10 results
     search_result = qdrant.similarity_search(query = query, k = 10)
-    print(f"Similarity search results: {search_result}")  # Debug log
+    print(f"Similarity search results: {len(search_result)} documents found")  # Debug log
     
-    # Initialize results list, context and mapping
+    # Initialize results list
     list_res = []
-    context = ""
-    mappings = {}
     
-    # Build context and results list
+    # Process each search result and calculate similarity scores
     for i, res in enumerate(search_result):
-
         print(f"Processing result {i}: {res.page_content[:100]}...")  # Debug log
-        # Add content to context
-        context += f"[{i}]\n{res.page_content}\n\n"
-        # Add ID to document path mapping
-        mappings[i] = res.metadata.get("path", "")
-        # Add result to list
+        
+        # Calculate similarity score between query and content
+        similarity_score = calcula_similaridade(query, res.page_content)
+        
+        # Add result to list with similarity score
         list_res.append({
-            "id": i,
+            "id": res.metadata.get("chunk_id", f"chunk_{i}"),  # Use chunk_id if available
             "path": res.metadata.get("path", ""),
-            "content": res.page_content
+            "content": res.page_content,
+            "similarity_score": round(similarity_score * 100, 2),  # Convert to percentage
+            "metadata": res.metadata
         })
 
-    print(f"Final context: {context[:200]}...")  # Debug log
-    print(f"Final list_res: {list_res}")  # Debug log
+    # Sort results by similarity score (highest first)
+    list_res.sort(key=lambda x: x["similarity_score"], reverse=True)
     
-    # Define system message
-    rolemsg = {"role": "system",
-               "content": "Answer the user's question using documents provided in the context. The context contains documents that should contain an answer. Always reference the document ID (in brackets, for example [0],[1]) of the document used to make a query. Use as many citations and documents as necessary to answer the question."}
+    # Return only the top 5 most relevant results
+    top_5_results = list_res[:5]
     
-    # Define messages
-    messages = [rolemsg, {"role": "user", "content": f"Documents:\n{context}\n\nQuestion: {query}"}]
-    
-    # Check if Nvidia API is being used
-    if use_nvidia_api:
-
-        # Create LLM instance using Nvidia API
-        resposta = client_ai.chat.completions.create(
-            model = "meta/llama3-70b-instruct",
-            messages = messages,
-            temperature = 0.5,
-            top_p = 1,
-            max_tokens = 1024,
-            stream = False
-        )
-        
-        # Get response from LLM
-        response = resposta.choices[0].message.content
-    else:
-        # Print message indicating that LLM cannot be used
-        print("Cannot use LLM.")
-        response = "Error: LLM not available."
-    
-    # Debug log
-    print(f"Response: {response}")
-    print(f"Documents: {list_res}")
+    print(f"Returning top 5 results with similarity scores: {[r['similarity_score'] for r in top_5_results]}")
     
     return {
-        "context": list_res,
-        "answer": response,
-        "mappings": mappings
+        "context": top_5_results,
+        "query": query,
+        "total_results": len(list_res),
+        "top_results_count": len(top_5_results)
     }
 
 

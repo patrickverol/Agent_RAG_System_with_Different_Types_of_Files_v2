@@ -1,7 +1,7 @@
 """
 Agent Module
-This module implements the agentic RAG system with LLM routing.
-It provides functions for query routing, RAG retrieval, web search, and answer generation.
+This module implements the agentic RAG system with similarity-based routing.
+It provides functions for RAG retrieval, web search, and answer generation.
 Includes observability features with LogFire and LangSmith.
 """
 
@@ -79,106 +79,44 @@ if not langchain_api_key_env:
 # Define the state class for the graph (AI Agent)
 class GraphState(TypedDict):
     query: str
-    source_decision: Literal["RAG", "WEB", "GRAPHICS", "RAG_GRAPHICS", ""]
-    rag_context: str | None
+    rag_context: list | None
+    best_similarity_score: float | None
     web_results: str | None
     graphics_description: str | None
     graphics_result: str | None
     final_answer: str | None
+    user_wants_graphics: bool | None
 
 
-@traceable(run_type="llm", name="Node_RouteQuery")  # LangSmith Decorator
-def dsa_route_query_node(state: GraphState, groq_api_key: str) -> dict:
+@traceable(run_type="llm", name="Node_InitializeAgent")  # LangSmith Decorator
+def dsa_initialize_agent_node(state: GraphState) -> dict:
     """
-    Analyzes the query and decides the data source (RAG or WEB).
-    Updates 'source_decision' in the state.
+    Generic initialization node for the agent.
+    This is a best practice for LangGraph initialization.
     """
     
     # Extract query from state
     query = state["query"]
 
     # Logfire span to group logs from this node
-    span = logfire.span("Executing Node: Query Routing", query=query)
+    span = logfire.span("Executing Node: Initialize Agent", query=query)
     
     # Within the Span
     with span:
-        print("--- Node: Query Routing ---")
-
-        # **REFINED PROMPT WITH EXAMPLES (FEW-SHOT)**
-        prompt = f"""Your task is to classify a user query to direct it to the best information source. The sources are:
-        1.  **RAG**: Internal knowledge base with technical support documents, specific procedures, system configurations, internal guides. Use RAG for questions about 'how to do X in our system', 'what is the configuration of Y', 'internal documentation about Z'.
-        2.  **WEB**: General web search for information about third-party software (e.g., Anaconda, Python, Excel), technology news, generic errors not documented internally, very recent information, or anything that is not specific to our internal documents.
-        3.  **GRAPHICS**: Requests to create, generate, build, draw, visualize, chart, graph, diagram, or any visual representation that doesn't need specific data. Use GRAPHICS for generic requests like 'create a chart template', 'draw a diagram of a computer', 'make a generic visualization'.
-        4.  **RAG_GRAPHICS**: Requests to create visualizations using specific data from our internal knowledge base. Use RAG_GRAPHICS when the user asks to visualize specific data, create charts from our data, or generate graphics based on internal information like 'create a chart of our stock data', 'visualize the financial metrics', 'generate a graph from our database'.
-
-        Examples:
-        - Query: "What is a broker?" -> Answer: RAG
-        - Query: "What is the latest informations about (something)?" -> Answer: WEB
-        - Query: "Can you provide me financial or marketmetrics about (something)?" -> Answer: RAG
-        - Query: "Could you provide me with the closing prices of (something) shares?" -> Answer: RAG
-        - Query: "How do I (something)?" -> Answer: WEB
-        - Query: "How to (something)?" -> Answer: WEB
-        - Query: "Could you provide me with the closing prices of (something) shares? Then, create a line graph for me with these values." -> Answer: RAG_GRAPHICS
-        - Query: "Please, find some document about (something), and then create a chart with this data." -> Answer: RAG_GRAPHICS
-        - Query: "Create a generic chart template" -> Answer: GRAPHICS
-        - Query: "Draw a diagram of a computer" -> Answer: GRAPHICS
-
-        Now, classify the following query:
-        User Query: '{query}'
-
-        Based on the query, what is the most appropriate source? Answer ONLY with the word 'RAG', 'WEB', 'GRAPHICS', or 'RAG_GRAPHICS'."""
-
-        try:
-            # **CREATE DEDICATED LLM FOR ROUTING WITH HIGHER TEMPERATURE**
-            # Here we can use a simpler model, like an SLM
-            router_llm = ChatGroq(api_key=groq_api_key,
-                                  model="llama3-8b-8192",
-                                  temperature=0.4)
-
-            # Execute the router
-            response = router_llm.invoke(prompt)
-
-            # Extract the response
-            raw_decision = response.content 
-
-            # DEBUG PRINT ESSENTIAL (Check in console!)
-            print(f"DEBUG: LLM Decision (Request Router): '{raw_decision}'")
-
-            # Clean the response text to keep only the word we're interested in
-            decision = raw_decision.strip().upper().replace("'", "").replace('"', '') 
-
-            # Final decision logic (if not RAG, assume WEB)
-            if decision == "RAG":
-                final_decision = "RAG"
-            elif decision == "WEB":
-                final_decision = "WEB"
-            elif decision == "GRAPHICS":
-                final_decision = "GRAPHICS"
-            elif decision == "RAG_GRAPHICS":
-                final_decision = "RAG_GRAPHICS"
-            else:
-                # If not RAG, WEB, GRAPHICS, or RAG_GRAPHICS, log the value but go to WEB
-                logfire.warn("Unexpected decision from router, using WEB as fallback.", raw_decision=raw_decision, query=query, decision_parsed=decision)
-                print(f"  Invalid/unexpected decision from router: '{raw_decision}'. Using WEB as fallback.") 
-                final_decision = "WEB"
-
-            print(f"  Final Router Decision: {final_decision}") 
-            
-            logfire.info("Routing decision finalized", raw_decision=raw_decision, final_decision=final_decision)
-
-            return {"source_decision": final_decision}
-
-        except Exception as e:
-            logfire.error("Error in routing node, using WEB as fallback.", query=query, error=str(e), exc_info=True)
-            print(f"  Error in routing node: {e}") 
-            print("  Using WEB as fallback due to error.") 
-            return {"source_decision": "WEB"}
+        print("--- Node: Initialize Agent ---")
+        print(f"  Initializing agent for query: {query}")
+        
+        logfire.info("Agent initialized", query=query, query_length=len(query))
+        
+        # Return empty dict to pass control to next node
+        return {}
 
 
 @traceable(run_type="retriever", name="Node_RetrieveRAG")  # LangSmith Decorator
 def dsa_retrieve_rag_node(state: GraphState) -> dict:
     """
     Retrieves documents from RAG by calling the API endpoint.
+    Returns the best context based on similarity score.
     """
     
     # Extract query from state
@@ -189,8 +127,10 @@ def dsa_retrieve_rag_node(state: GraphState) -> dict:
     
     # Within the span context
     with span:
+        print("--- Node: Retrieve RAG ---")
+        
         try:
-            # Call the RAG API instead of using local RAG
+            # Call the RAG API
             url = "http://backend:8000/rag_api"
             payload = json.dumps({"query": query})
             headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
@@ -202,23 +142,38 @@ def dsa_retrieve_rag_node(state: GraphState) -> dict:
             
             # Extract context from API response
             documents = response_data.get('context', [])
-            answer = response_data.get('answer', '')
             
             if documents:
-                # Build context from documents
-                context = "\n\n".join([f"[{doc['id']}] {doc['content']}" for doc in documents])
-                print(f"  RAG context found ({len(context)} chars).") 
-                logfire.info("RAG context found.", context_length=len(context))
-                return {"rag_context": context}
+                # Get the best similarity score (first document has highest score)
+                best_similarity_score = documents[0].get('similarity_score', 0)
+                
+                print(f"  RAG context found with {len(documents)} documents.")
+                print(f"  Best similarity score: {best_similarity_score}%")
+                
+                logfire.info("RAG context found", 
+                           documents_count=len(documents), 
+                           best_similarity_score=best_similarity_score,
+                           all_scores=[doc.get('similarity_score', 0) for doc in documents])
+                
+                return {
+                    "rag_context": documents,
+                    "best_similarity_score": best_similarity_score
+                }
             else:
-                print("  No RAG context found.") 
+                print("  No RAG context found.")
                 logfire.info("No RAG context found.")
-                return {"rag_context": "No relevant internal documents were found."}
+                return {
+                    "rag_context": [],
+                    "best_similarity_score": 0.0
+                }
                 
         except Exception as e:
             logfire.error("Error in RAG node", query=query, error=str(e), exc_info=True)
-            print(f"  Error in RAG node: {e}") 
-            return {"rag_context": f"Error searching internal documents: {e}"}
+            print(f"  Error in RAG node: {e}")
+            return {
+                "rag_context": [],
+                "best_similarity_score": 0.0
+            }
 
 
 @traceable(run_type="tool", name="Node_SearchWeb")  # LangSmith Decorator
@@ -235,20 +190,22 @@ def dsa_search_web_node(state: GraphState) -> dict:
     
     # Within the span context
     with span:
+        print("--- Node: Search Web ---")
+        
         try:
             web_search_tool = DuckDuckGoSearchRun()
             results = web_search_tool.run(query)
             if not results:
-                print("  No web search results.") 
+                print("  No web search results.")
                 logfire.info("No web search results.")
                 return {"web_results": "No relevant results found on the web."}
             else:
-                print(f"  Web search results found ({len(results)} chars).") 
+                print(f"  Web search results found ({len(results)} chars).")
                 logfire.info("Web search results found.", results_length=len(results))
                 return {"web_results": results}
         except Exception as e:
             logfire.error("Error in Web Search node", query=query, error=str(e), exc_info=True)
-            print(f"  Error in Web Search node: {e}") 
+            print(f"  Error in Web Search node: {e}")
             return {"web_results": f"Error performing web search: {e}"}
 
 
@@ -256,13 +213,13 @@ def dsa_search_web_node(state: GraphState) -> dict:
 def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str) -> dict:
     """
     Generates graphics description using a specialized LLM.
-    Can use RAG context if available for data-driven visualizations.
+    Can use RAG context or web results for data-driven visualizations.
     """
     
-    # Extract query and RAG context from state
+    # Extract query and contexts from state
     query = state["query"]
-    rag_context = state.get("rag_context", "")
-    source_decision = state.get("source_decision", "")
+    rag_context = state.get("rag_context", [])
+    web_results = state.get("web_results", "")
     
     # Start Logfire span to track execution of this node
     span = logfire.span("Executing Node: Generate Graphics Description", query=query)
@@ -272,22 +229,33 @@ def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str)
         print("--- Node: Generate Graphics Description ---")
         
         try:
-            # Check if we have RAG context and if this is a RAG_GRAPHICS request
-            has_rag_data = rag_context and rag_context != "No relevant internal documents were found." and not rag_context.startswith("Error")
-            is_rag_graphics = source_decision == "RAG_GRAPHICS"
+            # Determine the best context to use for graphics generation
+            context_to_use = ""
+            context_source = "none"
             
-            if has_rag_data and is_rag_graphics:
-                print("  Using RAG data for data-driven graphics generation...")
-                
+            if rag_context and len(rag_context) > 0:
+                # Use RAG context if available
+                context_to_use = "\n\n".join([f"[{doc['id']}] {doc['content']}" for doc in rag_context])
+                context_source = "rag"
+                print("  Using RAG context for graphics generation...")
+            elif web_results and web_results != "No relevant results found on the web.":
+                # Use web results as fallback
+                context_to_use = web_results
+                context_source = "web"
+                print("  Using web results for graphics generation...")
+            else:
+                print("  No context available for graphics generation...")
+            
+            if context_to_use:
                 graphics_prompt = f"""You are a professional graphics designer and data visualization expert specializing in creating precise, data-driven charts.
 
                 User Request: {query}
 
-                Available Data from Internal Knowledge Base:
-                {rag_context}
+                Available Context:
+                {context_to_use}
 
                 CRITICAL INSTRUCTIONS:
-                1. Use the EXACT numerical values extracted above
+                1. Use the EXACT numerical values extracted from the context above
                 2. Determine the most appropriate chart type based on the data type and user request
                 3. Create a SPECIFIC, DETAILED description for AI image generation with precise coordinates
 
@@ -320,9 +288,10 @@ def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str)
 
                 Description:"""
                 
-                logfire.info("Generating RAG-based graphics description", has_rag_data=True, source_decision=source_decision)
+                logfire.info("Generating context-based graphics description", 
+                           context_source=context_source, 
+                           context_length=len(context_to_use))
             else:
-                print("  Generating generic graphics description...")
                 # Create prompt for generic graphics description generation
                 graphics_prompt = f"""You are a professional graphics designer and data visualization expert.
                 
@@ -341,12 +310,12 @@ def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str)
                 
                 Description:"""
                 
-                logfire.info("Generating generic graphics description", has_rag_data=False, source_decision=source_decision)
+                logfire.info("Generating generic graphics description", context_source="none")
             
             # Use a specialized LLM for description generation
             description_llm = ChatGroq(
                 api_key=groq_api_key,
-                model="llama3-8b-8192",  # Using a more capable model for complex tasks
+                model="llama3-8b-8192",
                 temperature=0.3
             )
             
@@ -355,7 +324,9 @@ def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str)
             graphics_description = response.content
             
             print(f"  Graphics description generated ({len(graphics_description)} chars).")
-            logfire.info("Graphics description generated", description_length=len(graphics_description), used_rag_data=has_rag_data and is_rag_graphics)
+            logfire.info("Graphics description generated", 
+                        description_length=len(graphics_description), 
+                        context_source=context_source)
             
             return {"graphics_description": graphics_description}
         
@@ -462,7 +433,9 @@ def dsa_build_graphics_image_node(state: GraphState, google_api_key: str) -> dic
                 Status: Image generated successfully by Google GenAI"""
                 
                 print("  Image generated successfully using Google GenAI.")
-                logfire.info("Image generated successfully", has_image=True, model="gemini-2.0-flash-preview-image-generation")
+                logfire.info("Image generated successfully", 
+                           has_image=True, 
+                           model="gemini-2.0-flash-preview-image-generation")
                 
             else:
                 raise Exception("No image was generated by Google GenAI")
@@ -491,34 +464,27 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
     with span:
         print("--- Node: Answer Generation ---") 
         
-        rag_context = state.get("rag_context")
+        rag_context = state.get("rag_context", [])
         web_results = state.get("web_results")
-        graphics_result = state.get("graphics_result")
         context_provided = ""
         source_used = "None"
 
-        # Determine if RAG, WEB, and GRAPHICS contexts are useful
-        rag_useful = rag_context and rag_context != "No relevant internal documents were found."
+        # Determine if RAG or WEB contexts are useful
+        rag_useful = rag_context and len(rag_context) > 0
         web_useful = web_results and web_results != "No relevant results found on the web."
-        graphics_useful = graphics_result and not graphics_result.startswith("Error")
 
         # Check condition and define attributes
-        if graphics_useful and rag_useful:
-            context_provided = f"Context from internal documents:\n{rag_context}"
-            source_used = "RAG_GRAPHICS"
-            print("  Using RAG context to generate answer.") 
-            logfire.info("Using RAG context to generate answer.")
-            
-        elif graphics_useful and not rag_useful:
-            source_used = "GRAPHICS"
-            print("  Generating answer without RAG context.") 
-            logfire.info("Generating answer without RAG context.")
-        
-        elif rag_useful:
-            context_provided = f"Context from internal documents:\n{rag_context}"
+        if rag_useful:
+            # Build context from RAG documents
+            context_parts = []
+            for doc in rag_context:
+                context_parts.append(f"[{doc['id']}] {doc['content']}")
+            context_provided = f"Context from internal documents:\n{chr(10).join(context_parts)}"
             source_used = "RAG"
             print("  Using RAG context to generate answer.") 
-            logfire.info("Using RAG context to generate answer.")
+            logfire.info("Using RAG context to generate answer.", 
+                        documents_count=len(rag_context),
+                        best_similarity_score=state.get("best_similarity_score", 0))
 
         elif web_useful:
             context_provided = f"Web search results:\n{web_results}"
@@ -532,7 +498,10 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
             logfire.info("No useful context found to generate answer.")
 
         # Log the source used
-        logfire.info('Source(s) for generation', source_used=source_used, rag_context_present=rag_useful, web_results_present=web_useful, graphics_present=graphics_useful)
+        logfire.info('Source(s) for generation', 
+                    source_used=source_used, 
+                    rag_context_present=rag_useful, 
+                    web_results_present=web_useful)
 
         prompt = f"""You are a technical support assistant. Answer the user's question clearly and concisely, using ONLY the information provided in the context below, if available.
         If the user asks for a chart, just ignore that.
@@ -551,36 +520,11 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
             final_answer = response.content
             print(f"  Answer generated using source: {source_used}") 
             
-            logfire.info("Final answer generated", source_used=source_used, answer_length=len(final_answer))
+            logfire.info("Final answer generated", 
+                        source_used=source_used, 
+                        answer_length=len(final_answer))
 
-            if graphics_useful:
-                # For graphics, we need to preserve the image data in the final answer
-                # Extract the image data from graphics_result
-                import re
-                image_pattern = r'<image_data>(.*?)</image_data>'
-                image_match = re.search(image_pattern, graphics_result, re.DOTALL)
-                
-                if image_match and rag_useful:
-                    image_data = image_match.group(1)
-                    # Create a final answer that includes the image data
-                    final_answer = f"""{response.content}
-                    <image_data>{image_data}</image_data>"""
-    
-                    return {"final_answer": final_answer}
-                
-                elif image_match and not rag_useful:
-                    image_data = image_match.group(1)
-                    # Create a final answer that includes the image data
-                    final_answer = f"""{response.content}
-                    <image_data>{image_data}</image_data>"""
-                    return {"final_answer": final_answer}
-                else:
-                    # Fallback if no image data found
-                    final_answer = f"I've processed your graphics request: '{query}'. However, there was an issue generating the image. Please try again."
-                    return {"final_answer": final_answer}
-
-            else:
-                return {"final_answer": final_answer}
+            return {"final_answer": final_answer}
         
         except Exception as e:
             logfire.error("Error in generation node", query=query, source_used=source_used, error=str(e), exc_info=True)
@@ -588,46 +532,40 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
             return {"final_answer": f"Sorry, an error occurred while generating the answer: {e}"}
 
 
-def dsa_decide_source_edge(state: GraphState) -> Literal["retrieve_rag_node", "search_web_node", "generate_graphics_description_node"]:
+def dsa_decide_after_rag_edge(state: GraphState) -> Literal["generate_answer_node", "search_web_node"]:
     """
-    Decision node for source (RAG, WEB, GRAPHICS, or RAG_GRAPHICS).
+    Decision node after RAG to determine if we should use RAG results or search web.
     """
     
-    decision = state["source_decision"]
+    best_similarity_score = state.get("best_similarity_score", 0)
     
-    logfire.debug("Conditional Edge: Deciding next node", current_decision=decision)  # LogFire debug level
-    print(f"--- Conditional Edge: Decision received = '{decision}' ---") 
+    logfire.debug("Conditional Edge: Deciding after RAG", best_similarity_score=best_similarity_score)
+    print(f"--- Conditional Edge: After RAG, best similarity score = {best_similarity_score}% ---") 
     
-    if decision == "RAG":
-        print("  Edge: Going to RAG.") 
-        return "retrieve_rag_node"
-    elif decision == "GRAPHICS":
-        print("  Edge: Going to Graphics Description Generation.") 
-        return "generate_graphics_description_node"
-    elif decision == "RAG_GRAPHICS":
-        print("  Edge: Going to RAG first, then Graphics.") 
-        return "retrieve_rag_node"
+    if best_similarity_score >= 70:
+        print("  Edge: Similarity score >= 70%, using RAG context for answer generation.") 
+        return "generate_answer_node"
     else:
-        print("  Edge: Going to WEB.") 
+        print("  Edge: Similarity score < 70%, searching web for better context.") 
         return "search_web_node"
 
 
-def dsa_decide_after_rag_edge(state: GraphState) -> Literal["generate_answer_node", "generate_graphics_description_node"]:
+def dsa_decide_graphics_edge(state: GraphState) -> Literal["generate_graphics_description_node", "end"]:
     """
-    Decision node after RAG to determine if we need graphics generation.
+    Decision node to determine if user wants graphics generation.
     """
     
-    decision = state["source_decision"]
+    user_wants_graphics = state.get("user_wants_graphics", False)
     
-    logfire.debug("Conditional Edge: Deciding after RAG", current_decision=decision)
-    print(f"--- Conditional Edge: After RAG, decision was = '{decision}' ---") 
+    logfire.debug("Conditional Edge: Deciding graphics generation", user_wants_graphics=user_wants_graphics)
+    print(f"--- Conditional Edge: User wants graphics = {user_wants_graphics} ---") 
     
-    if decision == "RAG_GRAPHICS":
-        print("  Edge: Going to Graphics Description Generation with RAG data.") 
+    if user_wants_graphics:
+        print("  Edge: User wants graphics, proceeding to graphics generation.") 
         return "generate_graphics_description_node"
     else:
-        print("  Edge: Going to Answer Generation.") 
-        return "generate_answer_node"
+        print("  Edge: User doesn't want graphics, ending process.") 
+        return "end"
 
 
 def dsa_compile_graph(groq_api_key: str):
@@ -645,32 +583,31 @@ def dsa_compile_graph(groq_api_key: str):
         try:
             # Create nodes
             graph_builder = StateGraph(GraphState)
-            graph_builder.add_node("route_query_node", lambda state: dsa_route_query_node(state, groq_api_key))
+            graph_builder.add_node("initialize_agent_node", dsa_initialize_agent_node)
             graph_builder.add_node("retrieve_rag_node", dsa_retrieve_rag_node)
             graph_builder.add_node("search_web_node", dsa_search_web_node)
             graph_builder.add_node("generate_graphics_description_node", lambda state: dsa_generate_graphics_description_node(state, groq_api_key))
             graph_builder.add_node("build_graphics_image_node", lambda state: dsa_build_graphics_image_node(state, google_api_key))
             graph_builder.add_node("generate_answer_node", lambda state: dsa_generate_answer_node(state, groq_api_key))
-            graph_builder.set_entry_point("route_query_node")
-            
-            # Create condition for routing
-            graph_builder.add_conditional_edges("route_query_node", dsa_decide_source_edge, {
-                "retrieve_rag_node": "retrieve_rag_node",
-                "search_web_node": "search_web_node",
-                "generate_graphics_description_node": "generate_graphics_description_node",
-            })
-            
-            # Add conditional edge after RAG to handle RAG_GRAPHICS
-            graph_builder.add_conditional_edges("retrieve_rag_node", dsa_decide_after_rag_edge, {
-                "generate_answer_node": "generate_answer_node",
-                "generate_graphics_description_node": "generate_graphics_description_node",
-            })
+            graph_builder.set_entry_point("initialize_agent_node")
             
             # Add edges
+            graph_builder.add_edge("initialize_agent_node", "retrieve_rag_node")
             graph_builder.add_edge("search_web_node", "generate_answer_node")
             graph_builder.add_edge("generate_graphics_description_node", "build_graphics_image_node")
-            graph_builder.add_edge("build_graphics_image_node", "generate_answer_node")
-            graph_builder.add_edge("generate_answer_node", END)
+            graph_builder.add_edge("build_graphics_image_node", END)
+            
+            # Add conditional edge after RAG
+            graph_builder.add_conditional_edges("retrieve_rag_node", dsa_decide_after_rag_edge, {
+                "generate_answer_node": "generate_answer_node",
+                "search_web_node": "search_web_node",
+            })
+            
+            # Add conditional edge after answer generation for graphics
+            graph_builder.add_conditional_edges("generate_answer_node", dsa_decide_graphics_edge, {
+                "generate_graphics_description_node": "generate_graphics_description_node",
+                "end": END,
+            })
             
             # Compile graph
             app = graph_builder.compile()
@@ -684,9 +621,14 @@ def dsa_compile_graph(groq_api_key: str):
             raise Exception(f"Error compiling graph: {e}")
 
 
-def run_agent(query: str, groq_api_key: str):
+def run_agent(query: str, groq_api_key: str, user_wants_graphics: bool = False):
     """
     Runs the agent with the given query and returns the final state.
+    
+    Args:
+        query (str): The user query
+        groq_api_key (str): Groq API key for LLM operations
+        user_wants_graphics (bool): Whether user wants graphics generation
     """
     # Create Logfire span to track the entire agent execution
     span = logfire.span("Processing user query with Agent", query=query)
@@ -694,21 +636,24 @@ def run_agent(query: str, groq_api_key: str):
     # Within the span context
     with span:
         try:
-            logfire.info("Starting agent execution", query=query)
+            logfire.info("Starting agent execution", query=query, user_wants_graphics=user_wants_graphics)
             
             # Compile the graph
             app = dsa_compile_graph(groq_api_key)
             
             # Prepare inputs
-            inputs = {"query": query}
+            inputs = {
+                "query": query,
+                "user_wants_graphics": user_wants_graphics
+            }
 
             # Execute the graph (AI Agent)
             final_state = app.invoke(inputs)
             
             logfire.info("Agent execution completed successfully", 
                         query=query, 
-                        source_decision=final_state.get("source_decision"),
-                        has_final_answer=bool(final_state.get("final_answer")))
+                        has_final_answer=bool(final_state.get("final_answer")),
+                        has_graphics_result=bool(final_state.get("graphics_result")))
             
             return final_state
             

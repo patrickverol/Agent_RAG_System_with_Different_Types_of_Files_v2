@@ -33,8 +33,11 @@ from langchain_qdrant import QdrantVectorStore
 # Import storage module
 from storage import get_storage
 
-# Import database connection
-from connection import get_financial_data, get_all_tables_data
+# Import database auxiliary functions
+from aux_functions import get_all_tables_data
+
+# Import chunk ID generation and duplicate checking
+from aux_functions import gera_chunk_id, verifica_chunk_existente
 
 # Import required modules
 import os
@@ -200,11 +203,25 @@ def main_indexing(storage_config):
                         row_texts.append(", ".join(row_parts))
                     
                     print(f"Split into {len(row_texts)} chunks")
-                    # Add each row as a separate chunk
+                    
+                    # Process each row with chunk ID generation and duplicate checking
+                    chunks_added = 0
                     for i, row_text in enumerate(row_texts):
-                        metadata = [{"path": arquivo, "row": i}]
-                        qdrant.add_texts([row_text], metadatas=metadata)
-                    print(f"Successfully indexed {len(row_texts)} rows as separate chunks")
+                        metadata = {"path": arquivo, "row": i}
+                        
+                        # Generate chunk ID
+                        chunk_id = gera_chunk_id(row_text, metadata)
+                        
+                        # Check if chunk already exists
+                        if not verifica_chunk_existente(chunk_id, client):
+                            # Add chunk_id to metadata
+                            metadata["chunk_id"] = chunk_id
+                            qdrant.add_texts([row_text], metadatas=[metadata])
+                            chunks_added += 1
+                        else:
+                            print(f"  Chunk {chunk_id} already exists, skipping...")
+                    
+                    print(f"Successfully indexed {chunks_added} new chunks (skipped {len(row_texts) - chunks_added} duplicates)")
                     continue  # Skip the general text processing
                 
                 # Process Excel files - each row as separate chunk
@@ -221,11 +238,25 @@ def main_indexing(storage_config):
                             all_texts.append(", ".join(row_parts))
 
                     print(f"Split into {len(all_texts)} chunks")
-                    # Add each row as a separate chunk
+                    
+                    # Process each row with chunk ID generation and duplicate checking
+                    chunks_added = 0
                     for i, row_text in enumerate(all_texts):
-                        metadata = [{"path": arquivo, "row": i}]
-                        qdrant.add_texts([row_text], metadatas=metadata)
-                    print(f"Successfully indexed {len(all_texts)} rows as separate chunks")
+                        metadata = {"path": arquivo, "row": i}
+                        
+                        # Generate chunk ID
+                        chunk_id = gera_chunk_id(row_text, metadata)
+                        
+                        # Check if chunk already exists
+                        if not verifica_chunk_existente(chunk_id, client):
+                            # Add chunk_id to metadata
+                            metadata["chunk_id"] = chunk_id
+                            qdrant.add_texts([row_text], metadatas=[metadata])
+                            chunks_added += 1
+                        else:
+                            print(f"  Chunk {chunk_id} already exists, skipping...")
+                    
+                    print(f"Successfully indexed {chunks_added} new chunks (skipped {len(all_texts) - chunks_added} duplicates)")
                     continue  # Skip the general text processing
                 
                 else:
@@ -240,9 +271,24 @@ def main_indexing(storage_config):
                 textos = text_splitter.split_text(arquivo_content)
                 print(f"Split into {len(textos)} chunks")
                 
-                metadata = [{"path": arquivo} for _ in textos]
-                qdrant.add_texts(textos, metadatas=metadata)
-                print(f"Successfully indexed {len(textos)} chunks")
+                # Process each chunk with chunk ID generation and duplicate checking
+                chunks_added = 0
+                for i, texto in enumerate(textos):
+                    metadata = {"path": arquivo}
+                    
+                    # Generate chunk ID
+                    chunk_id = gera_chunk_id(texto, metadata)
+                    
+                    # Check if chunk already exists
+                    if not verifica_chunk_existente(chunk_id, client):
+                        # Add chunk_id to metadata
+                        metadata["chunk_id"] = chunk_id
+                        qdrant.add_texts([texto], metadatas=[metadata])
+                        chunks_added += 1
+                    else:
+                        print(f"  Chunk {chunk_id} already exists, skipping...")
+                
+                print(f"Successfully indexed {chunks_added} new chunks (skipped {len(textos) - chunks_added} duplicates)")
 
             finally:
                 # Only delete the temporary file if it's in the temp directory
@@ -288,13 +334,32 @@ def main_indexing(storage_config):
                     row_texts.append(", ".join(row_parts))
 
                 print(f"Split into {len(row_texts)} chunks from {schema_name}.{table_name}")
-                # Add each row as a separate chunk
-                for i, row_text in enumerate(row_texts):
-                    metadata = [{"path": metadata_path, "row": i, "source": "database", "schema": schema_name, "table": table_name}]
-                    qdrant.add_texts([row_text], metadatas=metadata)
                 
-                total_rows_indexed += len(row_texts)
-                print(f"Successfully indexed {len(row_texts)} rows from {schema_name}.{table_name}")
+                # Process each row with chunk ID generation and duplicate checking
+                chunks_added = 0
+                for i, row_text in enumerate(row_texts):
+                    metadata = {
+                        "path": metadata_path, 
+                        "row": i, 
+                        "source": "database", 
+                        "schema": schema_name, 
+                        "table": table_name
+                    }
+                    
+                    # Generate chunk ID
+                    chunk_id = gera_chunk_id(row_text, metadata)
+                    
+                    # Check if chunk already exists
+                    if not verifica_chunk_existente(chunk_id, client):
+                        # Add chunk_id to metadata
+                        metadata["chunk_id"] = chunk_id
+                        qdrant.add_texts([row_text], metadatas=[metadata])
+                        chunks_added += 1
+                    else:
+                        print(f"  Chunk {chunk_id} already exists, skipping...")
+                
+                total_rows_indexed += chunks_added
+                print(f"Successfully indexed {chunks_added} new chunks from {schema_name}.{table_name} (skipped {len(row_texts) - chunks_added} duplicates)")
             
             print(f"Total database rows indexed: {total_rows_indexed}")
         else:
