@@ -27,7 +27,6 @@ services:
         condition: service_healthy
     environment:
       - PYTHONUNBUFFERED=1
-      - NVIDIA_KEY=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
       - STORAGE_TYPE=${STORAGE_TYPE:-local}
       - DOCUMENTS_PATH=${DOCUMENTS_PATH:-/app/documents}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
