@@ -38,7 +38,7 @@ This project implements an **Agentic Retrieval-Augmented Generation (RAG) system
 
 <br>
     <div align="center">
-        <a><img src="https://github.com/user-attachments/assets/6eb83664-eff1-4ec2-918b-d1a839c98a61"></a> 
+        <a><img src="https://github.com/user-attachments/assets/4549fd58-d5a9-4cee-a5f5-cb4efb027d06"></a> 
     </div>
 </br>
 
@@ -47,6 +47,22 @@ This project implements an **Agentic Retrieval-Augmented Generation (RAG) system
 <br>
     <div align="center">
         <a><img src="https://github.com/user-attachments/assets/a75685db-0e83-44e2-9cbd-4aee55a38c6e"></a> 
+    </div>
+</br>
+
+## LangSmith
+
+<br>
+    <div align="center">
+        <a><img src="https://github.com/user-attachments/assets/5bff4edd-721c-4d3b-bba6-5ec6dafe7e42"></a> 
+    </div>
+</br>
+
+## Logfire
+
+<br>
+    <div align="center">
+        <a><img src="https://github.com/user-attachments/assets/e4224525-f380-4e45-b3d6-237c9abc8fa9"></a> 
     </div>
 </br>
 
@@ -130,15 +146,7 @@ The system is designed with a microservices architecture, divided into several c
 ├── document_storage/                                       # Document storage service
 │   ├── app.py                                             # Storage application
 │   ├── Dockerfile                                         # Container configuration
-│   ├── requirements.txt                                   # Python dependencies
-│   └── documents/                                         # Sample documents
-│       ├── Investment Strategies.pdf
-│       ├── statusinvest-busca-avancada-br.csv
-│       ├── statusinvest-busca-avancada-int.xlsx
-│       ├── subpasta/
-│       │   ├── Nasdaq.docx
-│       │   └── Stock Market.txt
-│       └── Types of Investments.pptx
+│   └── requirements.txt                                   # Python dependencies
 ├── init_db/                                               # Database initialization
 │   ├── load_stock_data.py                                 # Stock data loader
 │   ├── Dockerfile                                         # Container configuration
@@ -170,6 +178,10 @@ The system is designed with a microservices architecture, divided into several c
    - Access through LangSmith dashboard with API key
    - Provides detailed LLM chain tracing and debugging
 
+5. **Logfire** (Optional)
+   - Access through Logfire dashboard with API key
+   - Provides structured logging, distributed tracing, and real-time monitoring
+   - Tracks agent decisions, similarity scores, and performance metrics
 ---
 
 ## Requirements
@@ -238,7 +250,7 @@ The system is designed with a microservices architecture, divided into several c
    - Example:
    <br>
     <div align="center">
-        <a><img src="https://github.com/user-attachments/assets/6eb83664-eff1-4ec2-918b-d1a839c98a61"></a> 
+        <a><img src="https://github.com/user-attachments/assets/4549fd58-d5a9-4cee-a5f5-cb4efb027d06"></a> 
     </div>
    </br>
 
@@ -268,6 +280,33 @@ The system is designed with a microservices architecture, divided into several c
    <br>
     <div align="center">
         <a><img src="https://github.com/user-attachments/assets/a75685db-0e83-44e2-9cbd-4aee55a38c6e"></a> 
+    </div>
+   </br>
+
+8. **Access LangSmith** (Optional)
+   - Go to [LangSmith Dashboard](https://smith.langchain.com/)
+   - Sign in with your LangSmith account or create a new one
+   - Set up your `LANGSMITH_API_KEY` in the environment variables
+   - View detailed traces of LLM chains, agent decisions, and performance metrics
+   - Debug and analyze the agent's decision-making process
+   - Monitor similarity scores and routing decisions in real-time
+   <br>
+    <div align="center">
+        <a><img src="https://github.com/user-attachments/assets/5bff4edd-721c-4d3b-bba6-5ec6dafe7e42"></a> 
+    </div>
+   </br>
+
+9. **Access LogFire** (Optional)
+   - Go to [LogFire Dashboard](https://cloud.logfire.sh/)
+   - Sign in with your LogFire account or create a new one
+   - Set up your `LOGFIRE_TOKEN` in the environment variables
+   - View structured logs with rich metadata and context
+   - Monitor distributed traces across microservices
+   - Track agent decisions, similarity scores, and API performance
+   - Set up alerts for errors and performance issues
+   <br>
+    <div align="center">
+        <a><img src="https://github.com/user-attachments/assets/e4224525-f380-4e45-b3d6-237c9abc8fa9"></a> 
     </div>
    </br>
 
