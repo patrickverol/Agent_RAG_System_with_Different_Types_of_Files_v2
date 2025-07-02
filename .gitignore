@@ -2,7 +2,7 @@ backend/__pycache__/
 backend/requirements-version.txt
 
 frontend/__pycache__/
-
+frontend/.env
 images/
 outros/
 
