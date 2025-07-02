@@ -1,10 +1,10 @@
 <h1 align="center">
-    RAG System with Different Types of Files - V2.0
+    Agent RAG System with Different Types of Files - V2.0
 </h1>
 
 <br>
     <div align="center">
-        <a><img src="https://github.com/user-attachments/assets/60d874a7-3ffb-4d7e-b85b-260b8867f32b"></a> 
+        <a><img src="https://github.com/user-attachments/assets/42d57144-e498-4a19-87b2-39805c065530"></a> 
     </div>
 </br>
 
@@ -39,6 +39,14 @@ This project implements an **Agentic Retrieval-Augmented Generation (RAG) system
 <br>
     <div align="center">
         <a><img src="https://github.com/user-attachments/assets/4549fd58-d5a9-4cee-a5f5-cb4efb027d06"></a> 
+    </div>
+</br>
+
+## LangGraph - Agent Workflow
+
+<br>
+    <div align="center">
+        <a><img src="https://github.com/user-attachments/assets/d60a3392-86be-4318-bade-a46120ac935d"></a> 
     </div>
 </br>
 

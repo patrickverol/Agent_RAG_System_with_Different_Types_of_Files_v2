@@ -609,11 +609,15 @@ def compile_graph(groq_api_key: str):
             app = graph_builder.compile()
             print("Graph compiled successfully!") 
             
+            # Save the graph as image
+            with open("agent_workflow.png", "wb") as f:
+                f.write(app.get_graph().draw_mermaid_png())
+            
             logfire.info("LangGraph compiled successfully")
             return app
         except Exception as e:
             print(f"Agent Log - CRITICAL error compiling graph: {e}")  # Print for critical error
-            logfire.critical("Error compiling LangGraph", error=str(e), exc_info=True)
+            logfire.error("Error compiling LangGraph", error=str(e), exc_info=True)
             raise Exception(f"Error compiling graph: {e}")
 
 
