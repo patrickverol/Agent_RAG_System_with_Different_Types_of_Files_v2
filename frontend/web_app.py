@@ -174,74 +174,12 @@ def main():
                 answer = final_state.get("final_answer", "No answer generated.")
                 rag_context = final_state.get("rag_context", [])
                 best_similarity_score = final_state.get("best_similarity_score", 0)
-                web_results = final_state.get("web_results")
                 
                 end_time = time.time()
                 responseTime = round(end_time - start_time, 2)
                 
-                # Display answer using markdown
-                st.markdown(answer)
-                
-                # Display source information
-                if rag_context and len(rag_context) > 0:
-                    st.info(f"Source: Internal documents (Best similarity: {best_similarity_score}%)")
-                elif web_results and web_results != "No relevant results found on the web.":
-                    st.info("Source: Web search (Internal documents not relevant enough)")
-                else:
-                    st.info("Source: No relevant information found")
-                
-                # Display RAG context if available
-                if rag_context and len(rag_context) > 0:
-                    st.subheader("Documents used:")
-                    
-                    # Display expanded documents with download buttons
-                    for doc in rag_context:
-                        # Create expander for each document
-                        with st.expander(f"**ID:** `{doc['id']}` - **Similarity:** `{doc['similarity_score']}%` - **Source:** `{doc['path']}`"):
-                            # Display document content
-                            st.text_area("**Content:**", doc['content'], height=300)
-                            
-                            # Get document URL from storage
-                            try:
-                                # Ensure the document path is relative and properly formatted
-                                doc_path = doc['path'].lstrip('/')
-                                print(f"Getting URL for document path: {doc_path}")
-                                doc_url = storage.get_document_url(doc_path)
-                                print(f"Generated URL: {doc_url}")
-                                
-                                # Get document content
-                                temp_file = storage.get_document(doc_path)
-                                print(f"Successfully retrieved document content")
-                                
-                                # Read the file content in binary mode
-                                with open(temp_file, 'rb') as f:
-                                    doc_content = f.read()
-                                
-                                # Determine MIME type based on file extension
-                                file_ext = os.path.splitext(doc_path)[1].lower()
-                                mime_type = {
-                                    '.pdf': 'application/pdf',
-                                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                    '.doc': 'application/msword',
-                                    '.txt': 'text/plain',
-                                    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                                    '.ppt': 'application/vnd.ms-powerpoint'
-                                }.get(file_ext, 'application/octet-stream')
-                                
-                                # Create download button with proper MIME type
-                                st.download_button(
-                                    label=f"Download {os.path.basename(doc_path)}",
-                                    data=doc_content,
-                                    file_name=os.path.basename(doc_path),
-                                    mime=mime_type
-                                )
-                                
-                                # Clean up temporary file
-                                os.unlink(temp_file)
-                                
-                            except Exception as e:
-                                print(f"Error downloading {doc_path}: {str(e)}")
-                                st.error(f"Error downloading document: {str(e)}")
+                # Store the final state for display in the persistent section
+                st.session_state.finalState = final_state
 
                 # Add evaluation and feedback
                 try:
@@ -272,91 +210,193 @@ def main():
             st.error(f"Error processing your query: {str(e)}")
 
     # Display query result and graphics generation option outside the "Send" button block
-    if st.session_state.result and not st.session_state.graphicsGenerated:
-        # Graphics generation section
-        st.write("Would you like to generate graphics based on this answer?")
-        graphics_col1, graphics_col2 = st.columns(2)
+    if st.session_state.result:
+        # Always display the result first
+        st.subheader("Answer:")
+        st.markdown(st.session_state.result)
         
-        with graphics_col1:
-            if st.button("Yes, generate graphics"):
-                try:
-                    with st.spinner("Generating graphics..."):
-                        # Run the agent again with graphics generation
-                        graphics_state = run_agent(
-                            st.session_state.userInput, 
-                            groq_api_key, 
-                            user_wants_graphics=True
-                        )
+        # Display source information if available
+        if hasattr(st.session_state, 'finalState') and st.session_state.finalState:
+            rag_context = st.session_state.finalState.get("rag_context", [])
+            best_similarity_score = st.session_state.finalState.get("best_similarity_score", 0)
+            source_decision = st.session_state.finalState.get("source_decision", "UNKNOWN")
+            
+            # Display agent decision prominently
+            if source_decision == "RAG":
+                st.success(f"🤖 **Agent Decision: RAG** - Using internal documents (Best similarity: {best_similarity_score}%)")
+            elif source_decision == "WEB":
+                st.warning(f"🌐 **Agent Decision: WEB** - Using web search (Internal documents not relevant enough)")
+            else:
+                st.info(f"❓ **Agent Decision: {source_decision}** - Unknown source")
+            
+            # Display RAG context if available
+            if rag_context and len(rag_context) > 0:
+                st.subheader("Documents used:")
+                
+                # Display expanded documents with download buttons
+                for doc in rag_context:
+                    # Create expander for each document
+                    with st.expander(f"**ID:** `{doc['id']}` - **Similarity:** `{doc['similarity_score']}%` - **Source:** `{doc['path']}`"):
+                        # Display document content
+                        st.text_area("**Content:**", doc['content'], height=300)
                         
-                        # Get graphics result
-                        graphics_result = graphics_state.get("graphics_result")
-                        
-                        if graphics_result and not graphics_result.startswith("Error"):
-                            # Extract image data from the graphics result
-                            image_pattern = r'<image_data>(.*?)</image_data>'
-                            image_match = re.search(image_pattern, graphics_result, re.DOTALL)
+                        # Get document URL from storage
+                        try:
+                            # Ensure the document path is relative and properly formatted
+                            doc_path = doc['path'].lstrip('/')
+                            print(f"Getting URL for document path: {doc_path}")
+                            doc_url = storage.get_document_url(doc_path)
+                            print(f"Generated URL: {doc_url}")
                             
-                            if image_match:
-                                image_data_url = image_match.group(1)
+                            # Get document content
+                            temp_file = storage.get_document(doc_path)
+                            print(f"Successfully retrieved document content")
+                            
+                            # Read the file content in binary mode
+                            with open(temp_file, 'rb') as f:
+                                doc_content = f.read()
+                            
+                            # Determine MIME type based on file extension
+                            file_ext = os.path.splitext(doc_path)[1].lower()
+                            mime_type = {
+                                '.pdf': 'application/pdf',
+                                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                '.doc': 'application/msword',
+                                '.txt': 'text/plain',
+                                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                                '.ppt': 'application/vnd.ms-powerpoint'
+                            }.get(file_ext, 'application/octet-stream')
+                            
+                            # Create download button with proper MIME type
+                            st.download_button(
+                                label=f"Download {os.path.basename(doc_path)}",
+                                data=doc_content,
+                                file_name=os.path.basename(doc_path),
+                                mime=mime_type
+                            )
+                            
+                            # Clean up temporary file
+                            os.unlink(temp_file)
+                            
+                        except Exception as e:
+                            print(f"Error downloading {doc_path}: {str(e)}")
+                            st.error(f"Error downloading document: {str(e)}")
+        
+        # Graphics generation section - only show if graphics haven't been generated yet
+        if not st.session_state.graphicsGenerated:
+            st.write("Would you like to generate graphics based on this answer?")
+            graphics_col1, graphics_col2 = st.columns(2)
+            
+            with graphics_col1:
+                if st.button("Yes, generate graphics"):
+                    try:
+                        with st.spinner("Generating graphics..."):
+                            # Run the agent again with graphics generation
+                            graphics_state = run_agent(
+                                st.session_state.userInput, 
+                                groq_api_key, 
+                                user_wants_graphics=True
+                            )
+                            
+                            # Get graphics result
+                            graphics_result = graphics_state.get("graphics_result")
+                            
+                            if graphics_result and not graphics_result.startswith("Error"):
+                                # Extract image data from the graphics result
+                                image_pattern = r'<image_data>(.*?)</image_data>'
+                                image_match = re.search(image_pattern, graphics_result, re.DOTALL)
                                 
-                                # Display the generated chart
-                                st.subheader("Generated Chart:")
-                                
-                                # Use HTML to display the base64 image
-                                st.markdown(
-                                    f'<img src="{image_data_url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">',
-                                    unsafe_allow_html=True
-                                )
-                                
-                                # Add download button for the image
-                                import base64
-                                # Extract base64 data from the data URL
-                                base64_data = image_data_url.split(',')[1]
-                                image_bytes = base64.b64decode(base64_data)
-                                
-                                st.download_button(
-                                    label="Download Chart as PNG",
-                                    data=image_bytes,
-                                    file_name="generated_chart.png",
-                                    mime="image/png"
-                                )
-                                
-                                # Update session state
-                                st.session_state.graphicsGenerated = True
-                                st.session_state.graphicsResult = graphics_result
-                                
-                                st.success("Graphics generated successfully!")
+                                if image_match:
+                                    image_data_url = image_match.group(1)
+                                    
+                                    # Display the generated chart
+                                    st.subheader("Generated Chart:")
+                                    
+                                    # Use HTML to display the base64 image
+                                    st.markdown(
+                                        f'<img src="{image_data_url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">',
+                                        unsafe_allow_html=True
+                                    )
+                                    
+                                    # Add download button for the image
+                                    import base64
+                                    # Extract base64 data from the data URL
+                                    base64_data = image_data_url.split(',')[1]
+                                    image_bytes = base64.b64decode(base64_data)
+                                    
+                                    st.download_button(
+                                        label="Download Chart as PNG",
+                                        data=image_bytes,
+                                        file_name="generated_chart.png",
+                                        mime="image/png"
+                                    )
+                                    
+                                    # Update session state
+                                    st.session_state.graphicsGenerated = True
+                                    st.session_state.graphicsResult = graphics_result
+                                    
+                                    st.success("Graphics generated successfully!")
+                                else:
+                                    st.warning("No image data found in the graphics result.")
                             else:
-                                st.warning("No image data found in the graphics result.")
-                        else:
-                            st.error(f"Error generating graphics: {graphics_result}")
-                            
-                except Exception as e:
-                    st.error(f"Error generating graphics: {str(e)}")
+                                st.error(f"Error generating graphics: {graphics_result}")
+                                
+                    except Exception as e:
+                        st.error(f"Error generating graphics: {str(e)}")
+            
+            with graphics_col2:
+                if st.button("No, thanks"):
+                    st.session_state.graphicsGenerated = True
+                    st.info("Graphics generation skipped.")
         
-        with graphics_col2:
-            if st.button("No, thanks"):
-                st.session_state.graphicsGenerated = True
-                st.info("Graphics generation skipped.")
+        # Display generated graphics if they exist
+        elif st.session_state.graphicsGenerated and st.session_state.graphicsResult:
+            st.subheader("Generated Chart:")
+            
+            # Extract image data from the graphics result
+            image_pattern = r'<image_data>(.*?)</image_data>'
+            image_match = re.search(image_pattern, st.session_state.graphicsResult, re.DOTALL)
+            
+            if image_match:
+                image_data_url = image_match.group(1)
+                
+                # Use HTML to display the base64 image
+                st.markdown(
+                    f'<img src="{image_data_url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">',
+                    unsafe_allow_html=True
+                )
+                
+                # Add download button for the image
+                import base64
+                # Extract base64 data from the data URL
+                base64_data = image_data_url.split(',')[1]
+                image_bytes = base64.b64decode(base64_data)
+                
+                st.download_button(
+                    label="Download Chart as PNG",
+                    data=image_bytes,
+                    file_name="generated_chart.png",
+                    mime="image/png"
+                )
 
-    # Display feedback section after graphics decision
-    if st.session_state.result and st.session_state.graphicsGenerated and not st.session_state.feedbackSubmitted:
-        # Satisfaction feedback section
-        st.write("Are you satisfied with the answer?")
-        feedback_col1, feedback_col2 = st.columns(2)
-        with feedback_col1:
-            if st.button("Satisfied"):
-                captura_user_feedback(st.session_state.docId, st.session_state.userInput, st.session_state.result, True)
-                st.session_state.feedbackSubmitted = True
-                st.success("Feedback registered: Satisfied")
-        with feedback_col2:
-            if st.button("Not Satisfied"):
-                captura_user_feedback(st.session_state.docId, st.session_state.userInput, st.session_state.result, False)
-                st.session_state.feedbackSubmitted = True
-                st.warning("Feedback registered: Not Satisfied")
+        # Display feedback section after graphics decision
+        if not st.session_state.feedbackSubmitted and st.session_state.graphicsGenerated:
+            # Satisfaction feedback section
+            st.write("Are you satisfied with the answer?")
+            feedback_col1, feedback_col2 = st.columns(2)
+            with feedback_col1:
+                if st.button("Satisfied"):
+                    captura_user_feedback(st.session_state.docId, st.session_state.userInput, st.session_state.result, True)
+                    st.session_state.feedbackSubmitted = True
+                    st.success("Feedback registered: Satisfied")
+            with feedback_col2:
+                if st.button("Not Satisfied"):
+                    captura_user_feedback(st.session_state.docId, st.session_state.userInput, st.session_state.result, False)
+                    st.session_state.feedbackSubmitted = True
+                    st.warning("Feedback registered: Not Satisfied")
 
     # Rastreability of the application
-    APP_WATERMARK = "RAG-PROJECT-AGENTICRAG-LANGGRAPH-V3.0 - BY: PATRICK VEROL"
+    APP_WATERMARK = "RAG-PROJECT-AGENTICRAG-LANGGRAPH-V2.0 - BY: PATRICK VEROL"
 
     # Displays watermark at the bottom of the application
     st.markdown(f"<div style='text-align: center; color: #cccccc; font-size:20px;'>{APP_WATERMARK}</div>", unsafe_allow_html=True)

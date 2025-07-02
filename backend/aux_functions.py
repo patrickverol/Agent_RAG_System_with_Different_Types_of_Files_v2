@@ -9,9 +9,11 @@ import os
 import hashlib
 
 # Import similarity calculation
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+
+# Import HuggingFaceEmbeddings for better similarity calculation
+from langchain_huggingface import HuggingFaceEmbeddings
+from sklearn.metrics.pairwise import cosine_similarity
 
 def get_database_connection():
     """Get a connection to the PostgreSQL database."""
@@ -140,7 +142,8 @@ def gera_chunk_id(content: str, metadata: dict) -> str:
 
 def calcula_similaridade(query: str, context: str) -> float:
     """
-    Calculate similarity score between query and context using TF-IDF and cosine similarity.
+    Calculate similarity score between query and context using embeddings and cosine similarity.
+    Uses the same approach as dsa_avalia_similaridade function.
     
     Args:
         query (str): The user query
@@ -150,23 +153,36 @@ def calcula_similaridade(query: str, context: str) -> float:
         float: Similarity score between 0 and 1 (1 being most similar)
     """
     try:
-        # Create TF-IDF vectorizer
-        vectorizer = TfidfVectorizer(
-            lowercase=True,
-            stop_words='english',
-            ngram_range=(1, 2),
-            max_features=1000
+        # Handle empty or very short texts
+        if not query.strip() or not context.strip():
+            return 0.0
+        
+        if len(query.strip()) < 3 or len(context.strip()) < 3:
+            return 0.0
+        
+        # Initialize the embedding model (same as used in RAG)
+        embedding_model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/msmarco-bert-base-dot-v5",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
         )
         
-        # Fit and transform the documents
-        documents = [query, context]
-        tfidf_matrix = vectorizer.fit_transform(documents)
+        # Generate embeddings for query and context
+        query_embedding = embedding_model.embed_query(query.strip())
+        context_embedding = embedding_model.embed_query(context.strip())
         
-        # Calculate cosine similarity
-        similarity_matrix = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
+        # Calculate cosine similarity between the embeddings
+        similarity_matrix = cosine_similarity([query_embedding], [context_embedding])
         
-        # Return the similarity score
+        # Get the similarity score
         similarity_score = float(similarity_matrix[0][0])
+        
+        # Ensure the value is between 0 and 1
+        similarity_score = max(0.0, min(1.0, similarity_score))
+        
+        # Debug logging for unusual values
+        if similarity_score > 1.0 or similarity_score < 0.0:
+            print(f"Warning: Unusual similarity score: {similarity_score} for query: '{query[:50]}...' and context: '{context[:50]}...'")
         
         return similarity_score
         

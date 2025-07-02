@@ -86,10 +86,11 @@ class GraphState(TypedDict):
     graphics_result: str | None
     final_answer: str | None
     user_wants_graphics: bool | None
+    source_decision: Literal["RAG", "WEB", ""]
 
 
 @traceable(run_type="llm", name="Node_InitializeAgent")  # LangSmith Decorator
-def dsa_initialize_agent_node(state: GraphState) -> dict:
+def initialize_agent_node(state: GraphState) -> dict:
     """
     Generic initialization node for the agent.
     This is a best practice for LangGraph initialization.
@@ -113,7 +114,7 @@ def dsa_initialize_agent_node(state: GraphState) -> dict:
 
 
 @traceable(run_type="retriever", name="Node_RetrieveRAG")  # LangSmith Decorator
-def dsa_retrieve_rag_node(state: GraphState) -> dict:
+def retrieve_rag_node(state: GraphState) -> dict:
     """
     Retrieves documents from RAG by calling the API endpoint.
     Returns the best context based on similarity score.
@@ -177,7 +178,7 @@ def dsa_retrieve_rag_node(state: GraphState) -> dict:
 
 
 @traceable(run_type="tool", name="Node_SearchWeb")  # LangSmith Decorator
-def dsa_search_web_node(state: GraphState) -> dict:
+def search_web_node(state: GraphState) -> dict:
     """
     Searches the web for information.
     """
@@ -210,7 +211,7 @@ def dsa_search_web_node(state: GraphState) -> dict:
 
 
 @traceable(run_type="llm", name="Node_GenerateGraphicsDescription")  # LangSmith Decorator
-def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str) -> dict:
+def generate_graphics_description_node(state: GraphState, groq_api_key: str) -> dict:
     """
     Generates graphics description using a specialized LLM.
     Can use RAG context or web results for data-driven visualizations.
@@ -337,7 +338,7 @@ def dsa_generate_graphics_description_node(state: GraphState, groq_api_key: str)
 
 
 @traceable(run_type="llm", name="Node_BuildGraphicsImage")  # LangSmith Decorator
-def dsa_build_graphics_image_node(state: GraphState, google_api_key: str) -> dict:
+def build_graphics_image_node(state: GraphState) -> dict:
     """
     Builds the actual image using Google GenAI image generation.
     """
@@ -449,7 +450,7 @@ def dsa_build_graphics_image_node(state: GraphState, google_api_key: str) -> dic
 
 
 @traceable(run_type="llm", name="Node_GenerateAnswer")  # LangSmith Decorator
-def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
+def generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
     """
     Generates the final answer for the user.
     """
@@ -474,7 +475,7 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
         web_useful = web_results and web_results != "No relevant results found on the web."
 
         # Check condition and define attributes
-        if rag_useful:
+        if rag_useful and not web_useful:
             # Build context from RAG documents
             context_parts = []
             for doc in rag_context:
@@ -494,14 +495,9 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
 
         else:
             context_provided = "No additional information found in available sources."
+            source_used = ""
             print("  No useful context found to generate answer.") 
             logfire.info("No useful context found to generate answer.")
-
-        # Log the source used
-        logfire.info('Source(s) for generation', 
-                    source_used=source_used, 
-                    rag_context_present=rag_useful, 
-                    web_results_present=web_useful)
 
         prompt = f"""You are a technical support assistant. Answer the user's question clearly and concisely, using ONLY the information provided in the context below, if available.
         If the user asks for a chart, just ignore that.
@@ -524,15 +520,15 @@ def dsa_generate_answer_node(state: GraphState, groq_api_key: str) -> dict:
                         source_used=source_used, 
                         answer_length=len(final_answer))
 
-            return {"final_answer": final_answer}
+            return {"final_answer": final_answer, "source_decision": source_used}
         
         except Exception as e:
             logfire.error("Error in generation node", query=query, source_used=source_used, error=str(e), exc_info=True)
             print(f"  Error in generation node: {e}") 
-            return {"final_answer": f"Sorry, an error occurred while generating the answer: {e}"}
+            return {"final_answer": f"Sorry, an error occurred while generating the answer: {e}", "source_decision": "ERROR"}
 
 
-def dsa_decide_after_rag_edge(state: GraphState) -> Literal["generate_answer_node", "search_web_node"]:
+def decide_after_rag_edge(state: GraphState) -> Literal["generate_answer_node", "search_web_node"]:
     """
     Decision node after RAG to determine if we should use RAG results or search web.
     """
@@ -542,15 +538,15 @@ def dsa_decide_after_rag_edge(state: GraphState) -> Literal["generate_answer_nod
     logfire.debug("Conditional Edge: Deciding after RAG", best_similarity_score=best_similarity_score)
     print(f"--- Conditional Edge: After RAG, best similarity score = {best_similarity_score}% ---") 
     
-    if best_similarity_score >= 70:
-        print("  Edge: Similarity score >= 70%, using RAG context for answer generation.") 
+    if best_similarity_score >= 85:
+        print("  Edge: Similarity score >= 85%, using RAG context for answer generation.") 
         return "generate_answer_node"
     else:
-        print("  Edge: Similarity score < 70%, searching web for better context.") 
+        print("  Edge: Similarity score < 85%, searching web for better context.") 
         return "search_web_node"
 
 
-def dsa_decide_graphics_edge(state: GraphState) -> Literal["generate_graphics_description_node", "end"]:
+def decide_graphics_edge(state: GraphState) -> Literal["generate_graphics_description_node", "end"]:
     """
     Decision node to determine if user wants graphics generation.
     """
@@ -568,7 +564,7 @@ def dsa_decide_graphics_edge(state: GraphState) -> Literal["generate_graphics_de
         return "end"
 
 
-def dsa_compile_graph(groq_api_key: str):
+def compile_graph(groq_api_key: str):
     """
     Compiles (creates) the LangGraph (i.e., the AI Agent).
     """
@@ -583,12 +579,12 @@ def dsa_compile_graph(groq_api_key: str):
         try:
             # Create nodes
             graph_builder = StateGraph(GraphState)
-            graph_builder.add_node("initialize_agent_node", dsa_initialize_agent_node)
-            graph_builder.add_node("retrieve_rag_node", dsa_retrieve_rag_node)
-            graph_builder.add_node("search_web_node", dsa_search_web_node)
-            graph_builder.add_node("generate_graphics_description_node", lambda state: dsa_generate_graphics_description_node(state, groq_api_key))
-            graph_builder.add_node("build_graphics_image_node", lambda state: dsa_build_graphics_image_node(state, google_api_key))
-            graph_builder.add_node("generate_answer_node", lambda state: dsa_generate_answer_node(state, groq_api_key))
+            graph_builder.add_node("initialize_agent_node", initialize_agent_node)
+            graph_builder.add_node("retrieve_rag_node", retrieve_rag_node)
+            graph_builder.add_node("search_web_node", search_web_node)
+            graph_builder.add_node("generate_graphics_description_node", lambda state: generate_graphics_description_node(state, groq_api_key))
+            graph_builder.add_node("build_graphics_image_node", build_graphics_image_node)
+            graph_builder.add_node("generate_answer_node", lambda state: generate_answer_node(state, groq_api_key))
             graph_builder.set_entry_point("initialize_agent_node")
             
             # Add edges
@@ -598,13 +594,13 @@ def dsa_compile_graph(groq_api_key: str):
             graph_builder.add_edge("build_graphics_image_node", END)
             
             # Add conditional edge after RAG
-            graph_builder.add_conditional_edges("retrieve_rag_node", dsa_decide_after_rag_edge, {
+            graph_builder.add_conditional_edges("retrieve_rag_node", decide_after_rag_edge, {
                 "generate_answer_node": "generate_answer_node",
                 "search_web_node": "search_web_node",
             })
             
             # Add conditional edge after answer generation for graphics
-            graph_builder.add_conditional_edges("generate_answer_node", dsa_decide_graphics_edge, {
+            graph_builder.add_conditional_edges("generate_answer_node", decide_graphics_edge, {
                 "generate_graphics_description_node": "generate_graphics_description_node",
                 "end": END,
             })
@@ -639,7 +635,7 @@ def run_agent(query: str, groq_api_key: str, user_wants_graphics: bool = False):
             logfire.info("Starting agent execution", query=query, user_wants_graphics=user_wants_graphics)
             
             # Compile the graph
-            app = dsa_compile_graph(groq_api_key)
+            app = compile_graph(groq_api_key)
             
             # Prepare inputs
             inputs = {
@@ -652,6 +648,7 @@ def run_agent(query: str, groq_api_key: str, user_wants_graphics: bool = False):
             
             logfire.info("Agent execution completed successfully", 
                         query=query, 
+                        source_decision=final_state.get("source_decision", "UNKNOWN"),
                         has_final_answer=bool(final_state.get("final_answer")),
                         has_graphics_result=bool(final_state.get("graphics_result")))
             
